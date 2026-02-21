@@ -4,8 +4,15 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import LivePolls from '@/components/LivePolls';
 import AskTheTiger from '@/components/AskTheTiger';
+import Settings from '@/components/Settings';
 
-type Tab = 'polls' | 'chat';
+type Tab = 'polls' | 'chat' | 'settings';
+
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: 'polls', label: 'Live Polls', icon: '📊' },
+  { id: 'chat', label: 'Ask Tiger', icon: '🐯' },
+  { id: 'settings', label: 'Settings', icon: '⚙️' },
+];
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<Tab>('polls');
@@ -30,7 +37,6 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Live indicator */}
             <div className="flex items-center gap-2 bg-black/30 px-3 py-1.5 rounded-full border border-red-500/30">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
@@ -46,28 +52,20 @@ export default function HomePage() {
       <div className="bg-lsu-darker border-b border-white/10 sticky top-[68px] z-10">
         <div className="max-w-2xl mx-auto px-4">
           <div className="flex">
-            <button
-              onClick={() => setActiveTab('polls')}
-              className={clsx(
-                'flex-1 py-3 text-sm font-bold tracking-wide transition-all duration-200 border-b-2',
-                activeTab === 'polls'
-                  ? 'border-lsu-gold text-lsu-gold'
-                  : 'border-transparent text-white/50 hover:text-white/80'
-              )}
-            >
-              📊 Live Polls
-            </button>
-            <button
-              onClick={() => setActiveTab('chat')}
-              className={clsx(
-                'flex-1 py-3 text-sm font-bold tracking-wide transition-all duration-200 border-b-2',
-                activeTab === 'chat'
-                  ? 'border-lsu-gold text-lsu-gold'
-                  : 'border-transparent text-white/50 hover:text-white/80'
-              )}
-            >
-              🐯 Ask the Tiger
-            </button>
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={clsx(
+                  'flex-1 py-3 text-sm font-bold tracking-wide transition-all duration-200 border-b-2',
+                  activeTab === tab.id
+                    ? 'border-lsu-gold text-lsu-gold'
+                    : 'border-transparent text-white/50 hover:text-white/80'
+                )}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -76,7 +74,6 @@ export default function HomePage() {
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-5">
         {activeTab === 'polls' && (
           <div>
-            {/* Section heading */}
             <div className="mb-5">
               <h2 className="text-lsu-gold font-black text-xl">Game Day Polls</h2>
               <p className="text-white/50 text-sm mt-1">
@@ -96,6 +93,18 @@ export default function HomePage() {
               </p>
             </div>
             <AskTheTiger />
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div>
+            <div className="mb-5">
+              <h2 className="text-lsu-gold font-black text-xl">Settings</h2>
+              <p className="text-white/50 text-sm mt-1">
+                Configure your Geauxpanion app
+              </p>
+            </div>
+            <Settings />
           </div>
         )}
       </main>

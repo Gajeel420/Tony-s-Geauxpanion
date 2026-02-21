@@ -2,12 +2,12 @@
 
 import { useState } from 'react';
 import clsx from 'clsx';
-import { Poll, getOptionPercentage, getPollTotalVotes } from '@/lib/polls';
+import { Poll, getOptionPercentage, getPollTotalVotes } from '@/lib/polls-client';
 
 interface PollCardProps {
   poll: Poll;
   votedOption: string | null;
-  onVote: (pollId: string, optionId: string) => Promise<void>;
+  onVote: (pollId: string, optionId: string) => void;
 }
 
 const TYPE_LABELS: Record<Poll['type'], string> = {
@@ -25,18 +25,14 @@ const TYPE_COLORS: Record<Poll['type'], string> = {
 };
 
 export default function PollCard({ poll, votedOption, onVote }: PollCardProps) {
-  const [isVoting, setIsVoting] = useState(false);
+  const [localVoted, setLocalVoted] = useState<string | null>(votedOption);
   const totalVotes = getPollTotalVotes(poll);
-  const hasVoted = votedOption !== null;
+  const hasVoted = localVoted !== null;
 
-  async function handleVote(optionId: string) {
-    if (hasVoted || isVoting) return;
-    setIsVoting(true);
-    try {
-      await onVote(poll.id, optionId);
-    } finally {
-      setIsVoting(false);
-    }
+  function handleVote(optionId: string) {
+    if (hasVoted) return;
+    setLocalVoted(optionId);
+    onVote(poll.id, optionId);
   }
 
   return (
@@ -67,28 +63,27 @@ export default function PollCard({ poll, votedOption, onVote }: PollCardProps) {
       <div className="px-5 pb-5 space-y-3">
         {poll.options.map((option) => {
           const pct = getOptionPercentage(poll, option.id);
-          const isVotedFor = votedOption === option.id;
+          const isVotedFor = localVoted === option.id;
           const isCorrect = hasVoted && option.isCorrect === true;
           const isWrongVote = hasVoted && isVotedFor && option.isCorrect === false;
           const isLeading =
-            hasVoted &&
-            option.votes === Math.max(...poll.options.map((o) => o.votes));
+            hasVoted && option.votes === Math.max(...poll.options.map((o) => o.votes));
 
           return (
             <button
               key={option.id}
-              disabled={hasVoted || isVoting}
+              disabled={hasVoted}
               onClick={() => handleVote(option.id)}
               className={clsx(
                 'w-full text-left rounded-xl overflow-hidden relative transition-all duration-200',
-                !hasVoted && !isVoting
+                !hasVoted
                   ? 'hover:scale-[1.02] active:scale-[0.99] cursor-pointer'
                   : 'cursor-default',
                 isVotedFor && 'ring-2 ring-lsu-gold',
                 isCorrect && 'ring-2 ring-green-400'
               )}
             >
-              {/* Progress bar background */}
+              {/* Animated progress bar */}
               {hasVoted && (
                 <div
                   className={clsx(
@@ -103,7 +98,6 @@ export default function PollCard({ poll, votedOption, onVote }: PollCardProps) {
                 />
               )}
 
-              {/* Option content */}
               <div
                 className={clsx(
                   'relative flex items-center justify-between gap-3 px-4 py-3 rounded-xl border transition-colors',
@@ -135,9 +129,7 @@ export default function PollCard({ poll, votedOption, onVote }: PollCardProps) {
 
                 {hasVoted && (
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {isLeading && (
-                      <span className="text-lsu-gold text-xs">🔥</span>
-                    )}
+                    {isLeading && <span className="text-lsu-gold text-xs">🔥</span>}
                     <span
                       className={clsx(
                         'text-sm font-bold',
@@ -159,7 +151,7 @@ export default function PollCard({ poll, votedOption, onVote }: PollCardProps) {
         <span>{totalVotes.toLocaleString()} votes</span>
         {hasVoted && poll.type === 'trivia' && (
           <span className="text-lsu-gold/80">
-            {poll.options.find((o) => o.id === votedOption)?.isCorrect
+            {poll.options.find((o) => o.id === localVoted)?.isCorrect
               ? '✓ Correct! Geaux Tigers!'
               : '✗ Not quite — study up!'}
           </span>

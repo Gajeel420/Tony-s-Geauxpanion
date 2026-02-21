@@ -30,3 +30,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Android build artifacts (keep APK)
+android/build/
+android/.gradle/
+android/app/build/intermediates/
+android/app/build/generated/
+android/app/build/tmp/
+android/app/build/kotlin/
+android/capacitor-cordova-android-plugins/build/
+android/capacitor-android/build/
+
+# Keep APKs in git
+!android/app/build/outputs/apk/**/*.apk

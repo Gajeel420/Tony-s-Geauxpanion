@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
-import { SUGGESTED_QUESTIONS } from '@/lib/lsu-knowledge';
-import { ChatMessage } from '@/lib/claude';
+import { SUGGESTED_QUESTIONS, LSU_SYSTEM_PROMPT } from '@/lib/lsu-knowledge';
+import { streamChat, hasApiKey, ChatMessage } from '@/lib/anthropic-browser';
 
 interface DisplayMessage extends ChatMessage {
   id: string;
@@ -26,6 +26,7 @@ export default function AskTheTiger() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiKeyMissing, setApiKeyMissing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -33,95 +34,51 @@ export default function AskTheTiger() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    setApiKeyMissing(!hasApiKey());
+  }, []);
+
   async function sendMessage(text: string) {
     if (!text.trim() || isLoading) return;
+    if (!hasApiKey()) {
+      setApiKeyMissing(true);
+      return;
+    }
+
     setError(null);
+    setApiKeyMissing(false);
 
-    const userMessage: DisplayMessage = {
-      id: generateId(),
-      role: 'user',
-      content: text.trim(),
-    };
+    const userMsg: DisplayMessage = { id: generateId(), role: 'user', content: text.trim() };
+    const asstId = generateId();
+    const asstMsg: DisplayMessage = { id: asstId, role: 'assistant', content: '', isStreaming: true };
 
-    const assistantMsgId = generateId();
-    const assistantMessage: DisplayMessage = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      isStreaming: true,
-    };
-
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setMessages((prev) => [...prev, userMsg, asstMsg]);
     setInput('');
     setIsLoading(true);
 
-    // Build history (exclude welcome message and streaming placeholders)
     const history: ChatMessage[] = messages
       .filter((m) => m.id !== 'welcome' && !m.isStreaming)
       .map(({ role, content }) => ({ role, content }));
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text.trim(), history }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to get response');
-      }
-
-      if (!res.body) throw new Error('No response stream');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
       let accumulated = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const payload = line.slice(6).trim();
-            if (payload === '[DONE]') {
-              break;
-            }
-            try {
-              const parsed = JSON.parse(payload);
-              if (parsed.error) throw new Error(parsed.error);
-              if (parsed.text) {
-                accumulated += parsed.text;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsgId
-                      ? { ...m, content: accumulated }
-                      : m
-                  )
-                );
-              }
-            } catch {
-              // Skip malformed SSE lines
-            }
-          }
-        }
+      for await (const chunk of streamChat(text.trim(), history, LSU_SYSTEM_PROMPT)) {
+        accumulated += chunk;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === asstId ? { ...m, content: accumulated } : m))
+        );
       }
-
-      // Finalize message (remove streaming flag)
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, isStreaming: false } : m
-        )
+        prev.map((m) => (m.id === asstId ? { ...m, isStreaming: false } : m))
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong';
-      setError(msg);
-      // Remove the incomplete assistant message
-      setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId));
+      if (msg === 'NO_KEY') {
+        setApiKeyMissing(true);
+      } else {
+        setError(msg);
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== asstId));
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -133,13 +90,18 @@ export default function AskTheTiger() {
     sendMessage(input);
   }
 
-  function handleSuggestion(q: string) {
-    sendMessage(q);
-  }
-
   return (
     <div className="flex flex-col h-[calc(100vh-220px)] min-h-[500px]">
-      {/* Chat messages */}
+      {/* API key missing banner */}
+      {apiKeyMissing && (
+        <div className="mb-3 bg-amber-900/50 border border-amber-500/40 rounded-xl px-4 py-3 text-sm text-amber-200">
+          <strong>API key required.</strong> Go to{' '}
+          <span className="text-lsu-gold font-bold">⚙ Settings</span> tab and enter your
+          Anthropic API key to enable Tiger chat.
+        </div>
+      )}
+
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pb-4 pr-1 scroll-smooth">
         {messages.map((msg) => (
           <div
@@ -149,19 +111,15 @@ export default function AskTheTiger() {
               msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
             )}
           >
-            {/* Avatar */}
             <div
               className={clsx(
                 'flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-lg font-bold shadow-lg',
-                msg.role === 'assistant'
-                  ? 'bg-lsu-gold text-black'
-                  : 'bg-lsu-purple-light text-white'
+                msg.role === 'assistant' ? 'bg-lsu-gold text-black' : 'bg-lsu-purple-light text-white'
               )}
             >
               {msg.role === 'assistant' ? '🐯' : '👤'}
             </div>
 
-            {/* Bubble */}
             <div
               className={clsx(
                 'max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg',
@@ -199,7 +157,7 @@ export default function AskTheTiger() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggested questions (only show when conversation is short) */}
+      {/* Suggested questions */}
       {messages.length <= 3 && !isLoading && (
         <div className="py-3">
           <p className="text-white/40 text-xs mb-2 text-center">Try asking Tiger about...</p>
@@ -207,7 +165,7 @@ export default function AskTheTiger() {
             {SUGGESTED_QUESTIONS.slice(0, 4).map((q) => (
               <button
                 key={q}
-                onClick={() => handleSuggestion(q)}
+                onClick={() => sendMessage(q)}
                 className="text-xs px-3 py-1.5 rounded-full bg-lsu-purple border border-lsu-gold/30 text-lsu-gold hover:bg-lsu-gold hover:text-black transition-all duration-150 hover:scale-105"
               >
                 {q}
@@ -217,7 +175,7 @@ export default function AskTheTiger() {
         </div>
       )}
 
-      {/* Input form */}
+      {/* Input */}
       <form onSubmit={handleSubmit} className="flex gap-2 mt-2">
         <input
           ref={inputRef}
@@ -225,7 +183,7 @@ export default function AskTheTiger() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={isLoading}
-          placeholder="Ask Tiger anything about LSU..."
+          placeholder={apiKeyMissing ? 'Add API key in Settings…' : 'Ask Tiger anything about LSU…'}
           maxLength={500}
           className={clsx(
             'flex-1 bg-lsu-purple border border-lsu-gold/30 text-white placeholder-white/30 rounded-xl px-4 py-3 text-sm',
@@ -235,10 +193,10 @@ export default function AskTheTiger() {
         />
         <button
           type="submit"
-          disabled={!input.trim() || isLoading}
+          disabled={!input.trim() || isLoading || apiKeyMissing}
           className={clsx(
             'px-4 py-3 rounded-xl font-bold text-sm transition-all duration-150',
-            input.trim() && !isLoading
+            input.trim() && !isLoading && !apiKeyMissing
               ? 'bg-lsu-gold text-black hover:bg-lsu-gold-dark hover:scale-105 active:scale-95'
               : 'bg-lsu-gold/30 text-black/30 cursor-not-allowed'
           )}
@@ -248,7 +206,7 @@ export default function AskTheTiger() {
       </form>
 
       <p className="text-center text-white/20 text-xs mt-2">
-        Tiger is an AI assistant — always verify critical info with official sources
+        Tiger is an AI assistant — verify critical info with official sources
       </p>
     </div>
   );

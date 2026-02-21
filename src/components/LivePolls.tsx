@@ -2,116 +2,59 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import PollCard from './PollCard';
-import { Poll } from '@/lib/polls';
-
-// Track votes in sessionStorage so they persist across re-renders
-// but reset each browser session
-function getVoteKey(pollId: string) {
-  return `lsu-vote-${pollId}`;
-}
-
-function getSavedVote(pollId: string): string | null {
-  if (typeof window === 'undefined') return null;
-  return sessionStorage.getItem(getVoteKey(pollId));
-}
-
-function saveVote(pollId: string, optionId: string) {
-  if (typeof window === 'undefined') return;
-  sessionStorage.setItem(getVoteKey(pollId), optionId);
-}
+import {
+  Poll,
+  getPolls,
+  vote,
+  simulateCrowdVote,
+  getMyVote,
+  saveMyVote,
+} from '@/lib/polls-client';
 
 export default function LivePolls() {
   const [polls, setPolls] = useState<Poll[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const fetchPolls = useCallback(async () => {
-    try {
-      const res = await fetch('/api/polls');
-      if (!res.ok) throw new Error('Failed to fetch polls');
-      const data = await res.json();
-      setPolls(data.polls);
-      setLastUpdated(new Date());
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load polls');
-    } finally {
-      setLoading(false);
-    }
+  const refresh = useCallback(() => {
+    setPolls(getPolls());
+    setLastUpdated(new Date());
   }, []);
 
-  // Initial fetch + auto-refresh every 5 seconds for live vote counts
+  // Initial load
   useEffect(() => {
-    fetchPolls();
-    const interval = setInterval(fetchPolls, 5000);
-    return () => clearInterval(interval);
-  }, [fetchPolls]);
+    refresh();
+    setLoaded(true);
+  }, [refresh]);
 
-  async function handleVote(pollId: string, optionId: string) {
-    // Optimistic update
-    setPolls((prev) =>
-      prev.map((poll) => {
-        if (poll.id !== pollId) return poll;
-        return {
-          ...poll,
-          options: poll.options.map((opt) =>
-            opt.id === optionId ? { ...opt, votes: opt.votes + 1 } : opt
-          ),
-        };
-      })
-    );
+  // Simulate crowd activity every 4–8 seconds
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>;
 
-    saveVote(pollId, optionId);
-
-    // Confirm with server
-    try {
-      const res = await fetch(`/api/polls/${pollId}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ optionId }),
-      });
-      const data = await res.json();
-      if (data.poll) {
-        setPolls((prev) => prev.map((p) => (p.id === pollId ? data.poll : p)));
-      }
-    } catch {
-      // Revert optimistic update on error
-      setPolls((prev) =>
-        prev.map((poll) => {
-          if (poll.id !== pollId) return poll;
-          return {
-            ...poll,
-            options: poll.options.map((opt) =>
-              opt.id === optionId ? { ...opt, votes: opt.votes - 1 } : opt
-            ),
-          };
-        })
-      );
-      sessionStorage.removeItem(getVoteKey(pollId));
+    function tick() {
+      const next = simulateCrowdVote();
+      setPolls(next);
+      setLastUpdated(new Date());
+      const delay = 4000 + Math.random() * 4000;
+      timeout = setTimeout(tick, delay);
     }
+
+    timeout = setTimeout(tick, 4000 + Math.random() * 4000);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  function handleVote(pollId: string, optionId: string) {
+    saveMyVote(pollId, optionId);
+    const updated = vote(pollId, optionId);
+    setPolls(updated);
+    setLastUpdated(new Date());
   }
 
-  if (loading) {
+  if (!loaded) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <div className="text-4xl animate-bounce">🐯</div>
         <p className="text-white/60 text-sm">Loading polls from Death Valley...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-16">
-        <div className="text-4xl mb-3">😿</div>
-        <p className="text-red-400 mb-4">{error}</p>
-        <button
-          onClick={fetchPolls}
-          className="px-4 py-2 bg-lsu-gold text-black rounded-lg font-bold text-sm hover:bg-lsu-gold-dark transition-colors"
-        >
-          Try Again
-        </button>
       </div>
     );
   }
@@ -130,12 +73,17 @@ export default function LivePolls() {
         </div>
         {lastUpdated && (
           <span className="text-white/30 text-xs">
-            Updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            Updated{' '}
+            {lastUpdated.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })}
           </span>
         )}
       </div>
 
-      {/* Polls grid */}
+      {/* Polls */}
       <div className="space-y-4">
         {polls.length === 0 ? (
           <div className="text-center py-16 text-white/50">
@@ -147,7 +95,7 @@ export default function LivePolls() {
             <PollCard
               key={poll.id}
               poll={poll}
-              votedOption={getSavedVote(poll.id)}
+              votedOption={getMyVote(poll.id)}
               onVote={handleVote}
             />
           ))
@@ -155,7 +103,7 @@ export default function LivePolls() {
       </div>
 
       <p className="text-center text-white/20 text-xs mt-6">
-        Votes refresh every 5 seconds · One vote per session per poll
+        Crowd votes update in real time · One vote per poll per session
       </p>
     </div>
   );
